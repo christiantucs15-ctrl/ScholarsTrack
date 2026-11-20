@@ -1,0 +1,26 @@
+# Node / Vite / React
+node_modules/
+client/node_modules/
+client/dist/
+.vite/
+*.local
+
+# .NET / C# Build Artifacts
+backend/bin/
+backend/obj/
+*.user
+*.suo
+.vs/
+
+# Uploaded files & certificates
+backend/wwwroot/uploads/*
+!backend/wwwroot/uploads/.gitkeep
+*.pem
+*.pfx
+*.key
+
+# Environment & OS files
+.env
+.env.*
+.DS_Store
+Thumbs.db
