@@ -43,11 +43,107 @@ try
     await using var conn = new NpgsqlConnection(connString);
     await conn.OpenAsync();
 
-    // Auto-create grades, notifications, system_settings, and evaluators tables
-    // and update role constraints so the 3rd user role ('evaluator') is supported!
+    // Auto-create ALL base tables & normalized schema so a brand-new empty PostgreSQL
+    // database works out-of-the-box without running any manual SQL files first!
     const string initTablesSql = @"
+        CREATE TABLE IF NOT EXISTS users (
+            username VARCHAR(50) PRIMARY KEY,
+            password_hash VARCHAR(255) NOT NULL,
+            role VARCHAR(20) NOT NULL DEFAULT 'student',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
         ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
         ALTER TABLE users ADD CONSTRAINT users_role_check CHECK (role IN ('student', 'admin', 'evaluator', 'staff'));
+
+        CREATE TABLE IF NOT EXISTS clusters (
+            id VARCHAR(10) PRIMARY KEY,
+            name VARCHAR(50) NOT NULL UNIQUE
+        );
+
+        INSERT INTO clusters (id, name) VALUES
+            ('A', 'Cluster A'), ('B', 'Cluster B'), ('C', 'Cluster C'), ('D', 'Cluster D'),
+            ('E', 'Cluster E'), ('F', 'Cluster F'), ('G', 'Cluster G')
+        ON CONFLICT (id) DO NOTHING;
+
+        CREATE TABLE IF NOT EXISTS barangays (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR(100) NOT NULL UNIQUE,
+            cluster_id VARCHAR(10) NOT NULL REFERENCES clusters(id) ON DELETE CASCADE
+        );
+
+        INSERT INTO barangays (name, cluster_id) VALUES
+            ('Bugo', 'A'), ('Puerto', 'A'), ('Agusan', 'A'), ('Balubal', 'A'), ('Tablon', 'A'),
+            ('Lumbia', 'B'), ('Canitoan', 'B'), ('Pagatpat', 'B'), ('San Simon', 'B'), ('Baikingon', 'B'),
+            ('Dansolihon', 'C'), ('Tignapoloan', 'C'), ('Besigan', 'C'), ('Mambuaya', 'C'), ('Bayanga', 'C'),
+            ('Indahag', 'D'), ('Balulang', 'D'), ('Macasandig', 'D'), ('Nazareth', 'D'), ('Camaman-an', 'D'),
+            ('Bonbon', 'E'), ('Bayabas', 'E'), ('Kauswagan', 'E'), ('Bulua', 'E'), ('Iponan', 'E'),
+            ('FS Catanico', 'F'), ('Gusa', 'F'), ('Lapasan', 'F'), ('Cugman', 'F'), ('Macabalan', 'F'),
+            ('Carmen', 'G'), ('Patag', 'G'), ('Puntod', 'G'), ('Consolacion', 'G'), ('Unified Barangays', 'G')
+        ON CONFLICT (name) DO NOTHING;
+
+        CREATE TABLE IF NOT EXISTS scholars (
+            scholar_id VARCHAR(50) PRIMARY KEY REFERENCES users(username) ON DELETE CASCADE,
+            name VARCHAR(120) NOT NULL,
+            email VARCHAR(120),
+            contact_number VARCHAR(50),
+            school VARCHAR(150) DEFAULT 'Xavier University – Ateneo de Cagayan',
+            barangay_id INT NOT NULL REFERENCES barangays(id),
+            course VARCHAR(150) DEFAULT 'BS Information Technology',
+            year_level VARCHAR(20) DEFAULT '1st Year',
+            applicant_rank INT NOT NULL DEFAULT 1,
+            status VARCHAR(20) NOT NULL DEFAULT 'active',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS renewals (
+            id SERIAL PRIMARY KEY,
+            scholar_id VARCHAR(50) NOT NULL REFERENCES scholars(scholar_id) ON DELETE CASCADE,
+            academic_year VARCHAR(20) NOT NULL,
+            semester VARCHAR(30) NOT NULL,
+            status VARCHAR(30) NOT NULL DEFAULT 'pending',
+            remarks TEXT,
+            evaluated_by VARCHAR(50),
+            evaluated_at TIMESTAMP,
+            submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (scholar_id, academic_year, semester)
+        );
+
+        CREATE TABLE IF NOT EXISTS renewal_documents (
+            id SERIAL PRIMARY KEY,
+            renewal_id INT NOT NULL REFERENCES renewals(id) ON DELETE CASCADE,
+            doc_type VARCHAR(100) NOT NULL,
+            file_path VARCHAR(255) NOT NULL,
+            file_size_kb INT DEFAULT 1024,
+            status VARCHAR(30) NOT NULL DEFAULT 'pending',
+            verified_by VARCHAR(50),
+            verified_at TIMESTAMP,
+            uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS sdp_activities (
+            id SERIAL PRIMARY KEY,
+            title VARCHAR(150) NOT NULL,
+            category VARCHAR(80) NOT NULL DEFAULT 'Community Service',
+            target_date DATE NOT NULL,
+            cluster_id VARCHAR(10) REFERENCES clusters(id) ON DELETE SET NULL,
+            target_year_level VARCHAR(20) DEFAULT 'All Years',
+            expected_hours INT NOT NULL DEFAULT 4,
+            status VARCHAR(30) NOT NULL DEFAULT 'upcoming',
+            created_by VARCHAR(50) DEFAULT 'admin',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS sdp_completions (
+            id SERIAL PRIMARY KEY,
+            activity_id INT NOT NULL REFERENCES sdp_activities(id) ON DELETE CASCADE,
+            scholar_id VARCHAR(50) NOT NULL REFERENCES scholars(scholar_id) ON DELETE CASCADE,
+            time_in TIMESTAMP,
+            time_out TIMESTAMP,
+            completed_at TIMESTAMP,
+            verified_by VARCHAR(50) DEFAULT 'staff',
+            UNIQUE (activity_id, scholar_id)
+        );
 
         INSERT INTO users (username, password_hash, role)
         VALUES
@@ -239,6 +335,32 @@ try
     await using (var cleanCmd = new NpgsqlCommand(cleanFakeDocsSql, conn))
     {
         await cleanCmd.ExecuteNonQueryAsync();
+    }
+
+    // Seed default SDP activities if sdp_activities is empty (fresh DB)
+    const string seedSdpSql = @"
+        INSERT INTO sdp_activities (title, category, target_date, cluster_id, target_year_level, expected_hours, status, created_by)
+        SELECT v.title, v.category, CAST(v.target_date AS DATE), v.cluster_id, 'All Years', 4, v.status, 'admin'
+        FROM (VALUES
+            ('Academic Support & Peer Tutoring', 'Academic Support', '2026-08-15', NULL, 'completed'),
+            ('Leadership & Civic Responsibility Training', 'Leadership Training', '2026-08-30', NULL, 'completed'),
+            ('Scholars General Orientation', 'Seminar', '2026-09-10', NULL, 'completed'),
+            ('Barangay Clean-up & Tree Planting Activity', 'Community Service', '2026-10-30', 'A', 'in_progress'),
+            ('Financial Literacy & Career Webinar', 'Seminar', '2026-11-15', NULL, 'upcoming')
+        ) AS v(title, category, target_date, cluster_id, status)
+        WHERE NOT EXISTS (SELECT 1 FROM sdp_activities);";
+    await using (var sdpSeedCmd = new NpgsqlCommand(seedSdpSql, conn))
+    {
+        await sdpSeedCmd.ExecuteNonQueryAsync();
+    }
+
+    // Seed the 4,000 CDO scholars if scholars table has fewer than 4,000 rows
+    var seed4000Path = Path.Combine(Directory.GetCurrentDirectory(), "seed_4000_scholars.sql");
+    if (File.Exists(seed4000Path))
+    {
+        var seed4000Sql = await File.ReadAllTextAsync(seed4000Path);
+        await using var s4000Cmd = new NpgsqlCommand(seed4000Sql, conn);
+        await s4000Cmd.ExecuteNonQueryAsync();
     }
 
     Console.WriteLine("=================================================================");
