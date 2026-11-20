@@ -259,7 +259,7 @@ public class ApiController : ControllerBase
             await EnsureNormalizedSchemaAsync(conn);
 
             const string sql = @"
-                SELECT u.id, u.username, u.password_hash, u.role,
+                SELECT u.username, u.password_hash, u.role,
                        COALESCE(s.name, st.name, a.name) AS name, s.school, s.course, s.year_level,
                        b.name AS barangay, c.name AS cluster
                 FROM users u

@@ -47,11 +47,13 @@ try
     // database works out-of-the-box without running any manual SQL files first!
     const string initTablesSql = @"
         CREATE TABLE IF NOT EXISTS users (
+            id SERIAL,
             username VARCHAR(50) PRIMARY KEY,
             password_hash VARCHAR(255) NOT NULL,
             role VARCHAR(20) NOT NULL DEFAULT 'student',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS id SERIAL;
 
         ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
         ALTER TABLE users ADD CONSTRAINT users_role_check CHECK (role IN ('student', 'admin', 'evaluator', 'staff'));
